@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import wx
-import wx.lib.inspection
+# import wx.lib.inspection
 
 class Colour():
     def __init__(self, colourName):
@@ -162,11 +162,34 @@ class MainFrame(wx.Frame):
         self.sizer = wx.BoxSizer(wx.VERTICAL)
         self.__makeImageView__("lun.png")
         self.SetSizer(self.sizer)
+        self.__makeMenuBar__()
         self.Show()
 
     def __makeImageView__(self, imagePath):
         self.imageView = ImageView(imagePath, self)
         self.sizer.Add(self.imageView, proportion=1, flag=wx.EXPAND)
+
+    def __makeMenuBar__(self):
+        # Menu bar with one File menu opening an info box about the app
+        # and a button to exit the app.
+        # On MacOS the Quit and About buttons are automatically moved
+        # to the app main menu.
+        fileMenu = wx.Menu()
+        ex = fileMenu.Append(wx.ID_EXIT, "Quit", "Quit application.")
+        about = fileMenu.Append(wx.ID_ABOUT, "About korektor", "Show about info.")
+        menuBar = wx.MenuBar()
+        menuBar.Append(fileMenu, "&File")
+        self.SetMenuBar(menuBar)
+
+        # Binding menu buttons to actions.
+        self.Bind(wx.EVT_MENU, self.__onExit__, ex)
+        self.Bind(wx.EVT_MENU, self.__onAbout__, about)
+
+    def __onExit__(self, event):
+        self.Close(True)
+
+    def __onAbout__(self, event):
+        wx.MessageBox("korektor\n Copyright (C) Jakub Piśkiewicz 2022", "About korektor")
 
 if __name__ == '__main__':
     app = wx.App()
