@@ -37,7 +37,6 @@ class ImageView(wx.Panel):
         super().__init__(*args, **kwargs)
         self.img = wx.Image(image, wx.BITMAP_TYPE_PNG)
         self.imgScale = [self.img.GetWidth(), self.img.GetHeight()]
-        self.resizes = 0 # Counts the amount of rescales made.
         self.selectedArea = [None, None] # In image's coordinate system (0, 0) = top-left corner.
         self.selectionRescaleLock = True
         self.Bind(wx.EVT_PAINT, self.__paint__)
@@ -57,7 +56,7 @@ class ImageView(wx.Panel):
         elif elementRatio > containerRatio:
             newWidth = cWidth
             newHeight = newWidth / elementRatio
-        return ScalingReturnVal((round(newWidth), round(newHeight)), eWidth, newWidth, eHeight, newHeight)
+        return ScalingReturnVal((newWidth, newHeight), eWidth, newWidth, eHeight, newHeight)
 
     # Returns coords of center of this frame.
     def __getCenter__(self):
@@ -69,14 +68,14 @@ class ImageView(wx.Panel):
         center = self.__getCenter__()
         res = []
         for i in range(len(center)):
-            res.append(center[i] - round(self.imgScale[i] / 2))
+            res.append(center[i] - self.imgScale[i] / 2)
         return res
 
     def __rescaleSelection__(self, scale):
         if self.selectionRescaleLock:
             return
-        self.selectedArea[0] = (round(self.selectedArea[0][0] * scale.scalingRatioX), round(self.selectedArea[0][1] * scale.scalingRatioY))
-        self.selectedArea[1] = (round(self.selectedArea[1][0] * scale.scalingRatioX), round(self.selectedArea[1][1] * scale.scalingRatioY))
+        self.selectedArea[0] = (self.selectedArea[0][0] * scale.scalingRatioX, self.selectedArea[0][1] * scale.scalingRatioY)
+        self.selectedArea[1] = (self.selectedArea[1][0] * scale.scalingRatioX, self.selectedArea[1][1] * scale.scalingRatioY)
 
     # Returns a difference of each coordinate values
     # between two points.
@@ -87,28 +86,24 @@ class ImageView(wx.Panel):
     def __newSize__(self):
         parent = self.GetParent()
         if parent.IsShownOnScreen():
-            # This is to fix the rounding errors.
-            # if self.resizes > 100:
-            #     self.imgScale = [self.img.GetWidth(), self.img.GetHeight()]
-            #     self.resizes = 0
             containerSize = self.GetSize()
             rescaled = self.__scaleToFit__(containerSize, self.imgScale)
             self.imgScale = rescaled.scale
-            # TODO: If the size of the image didn't change, do not add 1 to resizes!
-            self.resizes += 1
             if self.selectedArea[1]:
                 self.__rescaleSelection__(rescaled)
 
     # Returns scaled image to new size.
     def __resize__(self):
         self.__newSize__()
-        return self.img.Scale(*self.imgScale)
+        imgScale = [round(x) for x in self.imgScale]
+        return self.img.Scale(*imgScale)
 
     def __drawImage__(self, dc):
         img = self.__resize__()
         if img:
             bmp = wx.Bitmap(img, dc)
-            dc.DrawBitmap(bmp, *self.__getTopLeft__())
+            topLeft = [int(x) for x in self.__getTopLeft__()]
+            dc.DrawBitmap(bmp, *topLeft)
 
     # Translates given coordinate to window coordinate system.
     # (adds vertical / horizontal shift of the image)
@@ -121,6 +116,9 @@ class ImageView(wx.Panel):
             raise ValueError("Not possible to get width and height of null selection.")
         return self.__calcXYDiff__(area[1], area[0])
 
+    def __nestedFloatArrayToInt__(self, arr):
+        return [[round(x) for x in ls] for ls in arr]
+
     def __drawSelection__(self, dc):
         # Don't try to draw a selection if nothing was selected.
         if not self.selectedArea[1]: return
@@ -129,6 +127,7 @@ class ImageView(wx.Panel):
         dc.SetPen(pen)
         dc.SetBrush(brush)
         translatedArea = [self.__translateToWindowCS__(x) for x in self.selectedArea]
+        translatedArea = self.__nestedFloatArrayToInt__(translatedArea)
         dc.DrawRectangle(*translatedArea[0], *self.__getSelectedWidthHeight__(translatedArea))
 
     def __paint__(self, event):
