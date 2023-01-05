@@ -102,7 +102,7 @@ class ImageView(wx.Panel):
         img = self.__resize__()
         if img:
             bmp = wx.Bitmap(img, dc)
-            topLeft = [int(x) for x in self.__getTopLeft__()]
+            topLeft = [round(x) for x in self.__getTopLeft__()]
             dc.DrawBitmap(bmp, *topLeft)
 
     # Translates given coordinate to window coordinate system.
