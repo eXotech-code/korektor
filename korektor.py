@@ -339,7 +339,7 @@ class MainFrame(wx.Frame):
         super().__init__(None, title="korektor", size=(924, 512))
         self.SetBackgroundColour(colours.get("background"))
         self.sizer = wx.BoxSizer(wx.VERTICAL)
-        self.image_view = ImageView("lun.png", colours)
+        self.image_view = ImageView("lun.png", colours, self)
         self.sizer.Add(self.image_view, proportion=1, flag=wx.EXPAND)
         self.SetSizer(self.sizer)
         self.__make_menu_bar__()
@@ -373,8 +373,12 @@ class Korektor(wx.App):
     Obiekt tej klasy uruchamia interfejs graficzny gdy powstaje.
     """
 
+    NAME = "korektor"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.SetAppName(self.NAME)
+        self.SetAppDisplayName(self.NAME)
         self.SetTopWindow(MainFrame(Colours()))
         self.MainLoop()
 
