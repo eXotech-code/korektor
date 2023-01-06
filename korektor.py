@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """
 Program służący do klonowania wybranego
 fragmentu zdjęcia i wklejania go w inne
@@ -201,6 +202,31 @@ class ScalingReturnVal:
         return Point(self.new_width / self.old_width, self.new_height / self.old_height)
 
 
+class Image(wx.Image):
+    """
+    Zdjęcie, które wspiera bezstratną zmianę rozmiaru oraz
+    kopiowanie jego fragmentu.
+    """
+
+    def __init__(self, image_path):
+        super().__init__(image_path, wx.BITMAP_TYPE_PNG)
+        self.scale = Point(self.GetWidth(), self.GetHeight())
+
+    def update_scale(self, new_scale):
+        """
+        Podmienia obecną skalę zdjęcia na nową.
+        """
+        self.scale = new_scale
+
+    def get_bitmap(self, dc):
+        """
+        Zwraca bitmapę kompatybilną z obecnyn Device Context.
+        """
+        scale = self.scale.round()
+        img = self.Scale(scale.x, scale.y)
+        return wx.Bitmap(img, dc)
+
+
 class ImageView(wx.Panel):
     """
     Widok edycyjny zdjęcia z możliwością zaznaczenia fragmentu zdjęcia
@@ -209,9 +235,8 @@ class ImageView(wx.Panel):
 
     def __init__(self, image, colours, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.img = wx.Image(image, wx.BITMAP_TYPE_PNG)
+        self.img = Image(image)
         self.colours = colours
-        self.img_scale = Point(self.img.GetWidth(), self.img.GetHeight())
         self.selected_area = SelectedArea()
         self.selection_rescale_lock = True
         self.window_dc = None
@@ -256,7 +281,7 @@ class ImageView(wx.Panel):
         na podstawie środka okna i wielkości zdjęcia.
         """
         center = self.__get_center__()
-        return center - self.img_scale / 2
+        return center - self.img.scale / 2
 
     def __new_size__(self):
         """
@@ -269,22 +294,14 @@ class ImageView(wx.Panel):
         parent = self.GetParent()
         if parent.IsShownOnScreen():
             container_size = Point(self.GetSize())
-            scaling = self.__scale_to_fit__(container_size, self.img_scale)
-            self.img_scale = scaling.scale
+            scaling = self.__scale_to_fit__(container_size, self.img.scale)
+            self.img.update_scale(scaling.scale)
             if self.selected_area.is_selected() and not self.selection_rescale_lock:
                 self.selected_area *= scaling.factor()
 
-    def __resize__(self):
-        """
-        Zwraca przeskalowane zdjęcie do rozmiaru wyświetlanego.
-        """
-        self.__new_size__()
-        img_scale = self.img_scale.round()
-        return self.img.Scale(img_scale.x, img_scale.y)
-
     def __draw_image__(self, dc):
-        img = self.__resize__()
-        bmp = wx.Bitmap(img, dc)
+        self.__new_size__()
+        bmp = self.img.get_bitmap(dc)
         top_left = self.__get_top_left__().round()
         dc.DrawBitmap(bmp, top_left.x, top_left.y)
 
