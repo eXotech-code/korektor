@@ -13,7 +13,6 @@ import numbers
 import wx
 # import wx.lib.inspection
 
-
 # pylint: disable=too-few-public-methods
 class Colours:
     """
@@ -81,6 +80,9 @@ class Point:
             self.x = x_or_point
             self.y = y
 
+    def __str__(self):
+        return f"Point(x={self.x}, y={self.y})"
+
     def __add__(self, right):
         if isinstance(right, Point):
             return Point(self.x + right.x, self.y + right.y)
@@ -145,11 +147,38 @@ class SelectedArea:
             self.selected_area[i] = self.selected_area[i] * right
         return self
 
+    def __has_proper_rect__(self):
+        return self.selected_area[0].x < self.selected_area[1].x
+
+    def __sort_short__(self, vals):
+        if vals[0] > vals[1]:
+            temp = vals[0]
+            vals[0] = vals[1]
+            vals[1] = temp
+        return vals
+
+    def __sort_coords__(self, coord1, coord2):
+        xs = [coord1.x, coord2.x]
+        ys = [coord1.y, coord2.y]
+        xs = self.__sort_short__(xs)
+        ys = self.__sort_short__(ys)
+        return xs, ys
+
+    def __convert_coords__(self):
+        if not self.__has_proper_rect__():
+            increasing = self.__sort_coords__(self.selected_area[0], self.selected_area[1])
+            top_left = Point(increasing[0][0], increasing[1][0])
+            bottom_right = Point(increasing[0][1], increasing[1][1])
+            return [top_left, bottom_right]
+        return self.selected_area
+
     def close(self, bottom_right):
         """
         Zamknij zaznaczony prostokątny obszar
         poprzez dodanie koordynatów prawego-dolnego
-        rogu zaznaczenia.
+        rogu zaznaczenia, a jeżeli pierwszy z koordynatów
+        nie jest koordynatem lewego-górnego rogu
+        kwadratu, zamień koordynaty na odpowiednie.
         """
         self.selected_area[1] = bottom_right
 
@@ -160,13 +189,20 @@ class SelectedArea:
         """
         return self.selected_area[1] is not None
 
-    def get_width_height(self):
+    def __get_dimensions__(self, rect):
         """
-        Zwraca szerokość i wysokość zaznaczenia.
+        Zwraca szerokość i wysokość prostokąta o formacie
+        [lewy_górny_róg, prawy_dolny_róg].
         """
         if not self.is_selected:
             raise ValueError("Not possible to get width and height of null selection.")
-        return self.selected_area[1] - self.selected_area[0]
+        return rect[1] - rect[0]
+
+    def get_width_height(self):
+        """
+        Zwraca wymiary zaznaczenia.
+        """
+        return self.__get_dimensions__(self.selected_area)
 
     def __image_to_window__(self, coord, offset):
         """
@@ -181,6 +217,19 @@ class SelectedArea:
         przesunięte o offset.
         """
         return self.__image_to_window__(self.selected_area[0], offset)
+
+    def to_wx_rect(self):
+        """
+        Zamienia prostokątny obszar zaznaczenia zapisany w obiekcie tej klasy na
+        obiekt klasy wx.Rect aby ułatwić kopiowanie zaznaczonego obszaru zdjęcia.
+        """
+        if self.is_selected():
+            converted = self.__convert_coords__()
+            top_left = converted[0].round()
+            width_height = self.__get_dimensions__(converted).round()
+            print(wx.Rect(top_left.x, top_left.y, width_height.x, width_height.y).GetWidth())
+            return wx.Rect(top_left.x, top_left.y, width_height.x, width_height.y)
+        raise AttributeError("Not possible to convert null selection to wx.Rect object.")
 
 
 @dataclass
@@ -211,6 +260,7 @@ class Image(wx.Image):
     def __init__(self, image_path):
         super().__init__(image_path, wx.BITMAP_TYPE_PNG)
         self.scale = Point(self.GetWidth(), self.GetHeight())
+        self.copy_area = None
 
     def update_scale(self, new_scale):
         """
@@ -218,13 +268,16 @@ class Image(wx.Image):
         """
         self.scale = new_scale
 
-    def get_bitmap(self, dc):
-        """
-        Zwraca bitmapę kompatybilną z obecnyn Device Context.
-        """
+    def get_scaled(self):
         scale = self.scale.round()
         img = self.Scale(scale.x, scale.y)
-        return wx.Bitmap(img, dc)
+        return img
+
+    def get_bitmap(self, dc):
+        """
+        Zwraca bitmapę kompatybilną z obecnym Device Context.
+        """
+        return wx.Bitmap(self.get_scaled(), dc)
 
 
 class ImageView(wx.Panel):
@@ -236,13 +289,16 @@ class ImageView(wx.Panel):
     def __init__(self, image, colours, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.img = Image(image)
+        self.img_cp = None
         self.colours = colours
         self.selected_area = SelectedArea()
         self.selection_rescale_lock = True
+        self.mouse_pos_lock = False
+        self.mouse_pos = None
         self.window_dc = None
         self.Bind(wx.EVT_PAINT, self.__paint__)
         self.Bind(wx.EVT_LEFT_DOWN, self.__on_mouse_down__)
-        self.Bind(wx.EVT_MOTION, self.__on_drag__)
+        self.Bind(wx.EVT_MOTION, self.__on_mousemove__)
         self.Bind(wx.EVT_SIZE, self.__on_resize__)
 
     # Returns scaled values for width and height.
@@ -321,10 +377,18 @@ class ImageView(wx.Panel):
         width_height = width_height.round()
         dc.DrawRectangle(top_left.x, top_left.y, width_height.x, width_height.y)
 
+    def __draw_copy_prev__(self, dc):
+        if self.img_cp:
+            bmp = wx.Bitmap(self.img_cp, dc)
+            pos_x = self.mouse_pos.x - round(self.img_cp.GetWidth() / 2)
+            pos_y = self.mouse_pos.y - round(self.img_cp.GetHeight() / 2)
+            dc.DrawBitmap(bmp, pos_x, pos_y)
+
     def __paint__(self, _):
         dc = wx.GCDC(wx.PaintDC(self))
         self.__draw_image__(dc)
         self.__draw_selection__(dc)
+        self.__draw_copy_prev__(dc)
 
     def __get_window_dc__(self):
         if self.window_dc is None:
@@ -334,13 +398,22 @@ class ImageView(wx.Panel):
     def __on_mouse_down__(self, event):
         pos = Point(event.GetLogicalPosition(self.__get_window_dc__()).Get())
         self.selected_area = SelectedArea(pos - self.__get_top_left__())
+        self.img_cp = None
         self.Refresh()
 
-    def __on_drag__(self, event):
+    def __on_mousemove__(self, event):
+        if event.Leaving():
+            # Zatrzymaj aktualizowanie pozycji kursora.
+            self.mouse_pos_lock = True
+        elif event.Entering():
+            self.mouse_pos_lock = False
+        if not self.mouse_pos_lock:
+            self.mouse_pos = Point(event.GetLogicalPosition(self.__get_window_dc__()).Get())
         if event.Dragging():
             self.selection_rescale_lock = True
-            pos = Point(event.GetLogicalPosition(self.__get_window_dc__()).Get())
-            self.selected_area.close(pos - self.__get_top_left__())
+            self.selected_area.close(self.mouse_pos - self.__get_top_left__())
+            self.img_cp = self.img.get_scaled().GetSubImage(self.selected_area.to_wx_rect())
+        if self.selected_area.is_selected():
             self.Refresh()
 
     def __on_resize__(self, _):
