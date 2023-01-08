@@ -11,7 +11,6 @@ w czasie rzeczywistym.
 from dataclasses import dataclass
 import numbers
 import wx
-# import wx.lib.inspection
 
 # pylint: disable=too-few-public-methods
 class Colours:
@@ -25,20 +24,12 @@ class Colours:
 
     COLOURS = {
         "background": "#fff",
-        "text": "#161616",
-        "textSecondary": "#808080",
-        "buttonBlueText": "#fff",
-        "uiBackground": "#F4F4F4",
-        "buttonBlue": "#0F62FE"
+        "border": "#808080",
     }
 
     DARK_COLOURS = {
         "background": "#161616",
-        "text": "#f4f4f4",
-        "textSecondary": "#808080",
-        "buttonBlueText": "#fff",
-        "uiBackground": "#262626",
-        "buttonBlue": "#0F62FE"
+        "border": "#f0f0f0",
     }
 
     def __adapted_colours__(self):
@@ -58,7 +49,7 @@ class OperandError(TypeError):
     """
     Błąd użycia złego typu danych podczas
     przeprowadzania operacji na obiektach
-    typu Point
+    typu Point.
     """
 
     def __init__(self, operation, operand):
@@ -163,6 +154,9 @@ class SelectedArea:
         return self.selected_area[0].x < self.selected_area[1].x
 
     def __sort_short__(self, vals):
+        """
+        Sortowanie list dwuelementowych.
+        """
         if vals[0] > vals[1]:
             temp = vals[0]
             vals[0] = vals[1]
@@ -177,6 +171,10 @@ class SelectedArea:
         return xs, ys
 
     def __convert_coords__(self):
+        """
+        Zamiana zapisanej formy zaznaczenia na
+        format [lewy_górny_róg, prawy_dolny_róg].
+        """
         if not self.__has_proper_rect__():
             increasing = self.__sort_coords__(self.selected_area[0], self.selected_area[1])
             top_left = Point(increasing[0][0], increasing[1][0])
@@ -188,16 +186,14 @@ class SelectedArea:
         """
         Zamknij zaznaczony prostokątny obszar
         poprzez dodanie koordynatów prawego-dolnego
-        rogu zaznaczenia, a jeżeli pierwszy z koordynatów
-        nie jest koordynatem lewego-górnego rogu
-        kwadratu, zamień koordynaty na odpowiednie.
+        rogu zaznaczenia.
         """
         self.selected_area[1] = bottom_right
 
     def is_selected(self):
         """
         Obszar jest uważany za zamknięty, jeżeli
-        posiada lewy-górny róg oraz prawy-dolny.
+        posiada dwa rogi.
         """
         return self.selected_area[1] is not None
 
@@ -262,6 +258,30 @@ class ScalingReturnVal:
         return Point(self.new_width / self.old_width, self.new_height / self.old_height)
 
 
+class FileDialog(wx.FileDialog):
+    """
+    Klasa dziedzicząca z wx.FileDialog ułatwiająca tworzenie menu wyboru
+    nazwy pliku do otwarcia / zapisania.
+    """
+
+    def __init__(self, parent, action):
+        if action == "open":
+            style = wx.FD_OPEN|wx.FD_FILE_MUST_EXIST
+            name = "Otwórz obraz"
+        else:
+            style = wx.FD_SAVE
+            name = "Zapisz obraz"
+        super().__init__(parent, name, wildcard="*.png", style=style)
+
+    def get_filename(self):
+        """
+        Zwraca nazwę pliku wybraną przez użytkownika.
+        """
+        if self.ShowModal() == wx.ID_CANCEL:
+            return None
+        return self.GetPath()
+
+
 class Image(wx.Image):
     """
     Zdjęcie, które wspiera bezstratną zmianę rozmiaru oraz
@@ -270,13 +290,15 @@ class Image(wx.Image):
 
     def __init__(self, image):
         if isinstance(image, wx.Image):
-            # Copy constructor
-            super().__init__(image)
+            # Jeżeli przekazano obiekt typu wx.Image
+            # do konstruktora, zainicjalizuj klasę bazową, tak aby
+            # stała się kopią tego obiektu.
+            super().__init__(image) # Użycie konstruktora kopiującego wx.Object
         else:
             super().__init__(image, wx.BITMAP_TYPE_PNG)
         self.scale = Point(self.GetWidth(), self.GetHeight())
         # Kopia zdjęcia ze skalą pasującą do obecnej wielkości okna
-        # zapisana jako bitmapa. Używana jest, gdy wynik funckji
+        # zapisana jako bitmapa. Używana jest, gdy wynik funkcji
         # self.get_scaled() potrzebny jest więcej niż raz.
         self.bitmap_cache = None
 
@@ -289,7 +311,7 @@ class Image(wx.Image):
     def get_scaled(self):
         """
         Zwraca zdjęcie zeskalowane do rozmiaru zapisanego w
-        obiekcie tej klasy.
+        self.scale.
         """
         scale = self.scale.round()
         img = self.Scale(scale.x, scale.y)
@@ -307,9 +329,12 @@ class Image(wx.Image):
 
     def copy(self, copy_area):
         """
-        Tworzy kopię fragmentu wybranego tego zdjęcia.
+        Tworzy kopię wybranego fragmentu tego zdjęcia.
         """
-        copy = self.GetSubImage(copy_area)
+        try:
+            copy = self.GetSubImage(copy_area)
+        except wx.wxAssertionError:
+            return None
         return Image(copy)
 
     def paste(self, *args, **kwargs):
@@ -424,7 +449,7 @@ class ImageView(wx.Panel):
         # on nie istnieje (trochę oczywiste xD).
         if not self.selected_area.is_selected():
             return
-        pen = wx.Pen(self.colours.get("textSecondary"), width=2, style=wx.PENSTYLE_LONG_DASH)
+        pen = wx.Pen(self.colours.get("border"), width=2, style=wx.PENSTYLE_LONG_DASH)
         brush = wx.Brush(wx.Colour(0, 0, 0, wx.ALPHA_TRANSPARENT))
         dc.SetPen(pen)
         dc.SetBrush(brush)
@@ -467,6 +492,13 @@ class ImageView(wx.Panel):
         scale_y = scale_x / ratio
         return Point(scale_x, scale_y)
 
+    def save_file(self, filename):
+        """
+        Funkcja używana przez obiekty klasy MainFrame
+        do zapisu zdjęcia.
+        """
+        self.img.SaveFile(filename)
+
     def __on_mouse_down__(self, _):
         if self.img_cp:
             # Wklej zdjęcie.
@@ -483,6 +515,9 @@ class ImageView(wx.Panel):
             factor = self.img.get_scale_factor()
             full_select = self.selected_area / factor
             self.img_cp = self.img.copy(full_select.to_wx_rect())
+            if not self.img_cp:
+                self.selected_area = SelectedArea()
+                return
             new_scale = self.img_cp.scale * factor
             self.img_cp.update_scale(new_scale)
             self.Refresh()
@@ -511,37 +546,45 @@ class MainFrame(wx.Frame):
     Główne okno interfejsu graficznego.
     """
 
-    def __init__(self, colours):
+    def __init__(self, colours, filename):
         super().__init__(None, title="korektor", size=(924, 512))
         self.SetBackgroundColour(colours.get("background"))
         self.sizer = wx.BoxSizer(wx.VERTICAL)
-        self.image_view = ImageView("lun.png", colours, self)
+        self.image_view = ImageView(filename, colours, self)
         self.sizer.Add(self.image_view, proportion=1, flag=wx.EXPAND)
         self.SetSizer(self.sizer)
         self.__make_menu_bar__()
         self.Show()
 
     def __make_menu_bar__(self):
-        # Menu bar with one File menu opening an info box about the app
-        # and a button to exit the app.
-        # On MacOS the Quit and About buttons are automatically moved
-        # to the app main menu.
+        """
+        Wstążka z menu plików, które zawiera opcje wyjścia, pokazania
+        informacji na temat tej aplikacji oraz opcją zapisania pliku.
+        Na MacOS opcje Quit i About są wrzucane automatycznie do osobnego menu
+        o nazwie takiej samej jak nazwa aplikacji.
+        """
         file_menu = wx.Menu()
         ex = file_menu.Append(wx.ID_EXIT, "Quit", "Quit application.")
         about = file_menu.Append(wx.ID_ABOUT, "About korektor", "Show about info.")
+        save = file_menu.Append(wx.ID_SAVE, "Save", "Save the file.")
         menu_bar = wx.MenuBar()
         menu_bar.Append(file_menu, "&File")
         self.SetMenuBar(menu_bar)
 
-        # Binding menu buttons to actions.
+        # Dodawanie akcji do przycisków.
         self.Bind(wx.EVT_MENU, self.__on_exit__, ex)
         self.Bind(wx.EVT_MENU, self.__on_about__, about)
+        self.Bind(wx.EVT_MENU, self.__on_save__, save)
 
     def __on_exit__(self, _):
         self.Close(True)
 
     def __on_about__(self, _):
         wx.MessageBox("korektor\n Copyright (C) Jakub Piśkiewicz 2022", "About korektor")
+
+    def __on_save__(self, _):
+        filename = FileDialog(self, "save").get_filename()
+        self.image_view.save_file(filename)
 
 
 class Korektor(wx.App):
@@ -555,10 +598,14 @@ class Korektor(wx.App):
         super().__init__(*args, **kwargs)
         self.SetAppName(self.NAME)
         self.SetAppDisplayName(self.NAME)
-        self.SetTopWindow(MainFrame(Colours()))
+        filename = FileDialog(None, "open").get_filename()
+        if not filename:
+            self.Destroy()
+            return
+        mf = MainFrame(Colours(), filename)
+        self.SetTopWindow(mf)
         self.MainLoop()
 
 
 if __name__ == '__main__':
     Korektor()
-    # wx.lib.inspection.InspectionTool().Show()
