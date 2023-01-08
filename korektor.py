@@ -83,6 +83,9 @@ class Point:
     def __str__(self):
         return f"Point(x={self.x}, y={self.y})"
 
+    def __eq__(self, right):
+        return self.x == right.x and self.y == right.y
+
     def __add__(self, right):
         if isinstance(right, Point):
             return Point(self.x + right.x, self.y + right.y)
@@ -143,9 +146,18 @@ class SelectedArea:
         self.selected_area = [top_left, None]
 
     def __imul__(self, right):
-        for i in range(2):
-            self.selected_area[i] = self.selected_area[i] * right
-        return self
+        if isinstance(right, Point):
+            for i in range(2):
+                self.selected_area[i] = self.selected_area[i] * right
+            return self
+        raise OperandError("*=", right)
+
+    def __truediv__(self, right):
+        if isinstance(right, Point):
+            res = SelectedArea(self.selected_area[0] / right)
+            res.close(self.selected_area[1] / right)
+            return res
+        raise OperandError("/", right)
 
     def __has_proper_rect__(self):
         return self.selected_area[0].x < self.selected_area[1].x
@@ -227,7 +239,6 @@ class SelectedArea:
             converted = self.__convert_coords__()
             top_left = converted[0].round()
             width_height = self.__get_dimensions__(converted).round()
-            print(wx.Rect(top_left.x, top_left.y, width_height.x, width_height.y).GetWidth())
             return wx.Rect(top_left.x, top_left.y, width_height.x, width_height.y)
         raise AttributeError("Not possible to convert null selection to wx.Rect object.")
 
@@ -257,10 +268,17 @@ class Image(wx.Image):
     kopiowanie jego fragmentu.
     """
 
-    def __init__(self, image_path):
-        super().__init__(image_path, wx.BITMAP_TYPE_PNG)
+    def __init__(self, image):
+        if isinstance(image, wx.Image):
+            # Copy constructor
+            super().__init__(image)
+        else:
+            super().__init__(image, wx.BITMAP_TYPE_PNG)
         self.scale = Point(self.GetWidth(), self.GetHeight())
-        self.copy_area = None
+        # Kopia zdjęcia ze skalą pasującą do obecnej wielkości okna
+        # zapisana jako bitmapa. Używana jest, gdy wynik funckji
+        # self.get_scaled() potrzebny jest więcej niż raz.
+        self.bitmap_cache = None
 
     def update_scale(self, new_scale):
         """
@@ -269,6 +287,10 @@ class Image(wx.Image):
         self.scale = new_scale
 
     def get_scaled(self):
+        """
+        Zwraca zdjęcie zeskalowane do rozmiaru zapisanego w
+        obiekcie tej klasy.
+        """
         scale = self.scale.round()
         img = self.Scale(scale.x, scale.y)
         return img
@@ -277,7 +299,36 @@ class Image(wx.Image):
         """
         Zwraca bitmapę kompatybilną z obecnym Device Context.
         """
-        return wx.Bitmap(self.get_scaled(), dc)
+        if self.bitmap_cache and self.bitmap_cache[0] == self.scale:
+            return self.bitmap_cache[1]
+        bmp = wx.Bitmap(self.get_scaled(), dc)
+        self.bitmap_cache = [self.scale, bmp]
+        return bmp
+
+    def copy(self, copy_area):
+        """
+        Tworzy kopię fragmentu wybranego tego zdjęcia.
+        """
+        copy = self.GetSubImage(copy_area)
+        return Image(copy)
+
+    def paste(self, *args, **kwargs):
+        """
+        Przeciążenie metody wx.Image.Paste() usuwające
+        wartość self.bitmap_cache, aby możnabyło zobaczyć
+        efekt wklejenia.
+        """
+        self.bitmap_cache = None
+        return self.Paste(*args, **kwargs)
+
+    def get_scale_factor(self):
+        """
+        Zwraca stosunek oryginalnej wielkości zdjęcia, do zeskalowanej.
+        """
+        return Point(
+                self.scale.x / self.GetWidth(),
+                self.scale.y / self.GetHeight()
+        )
 
 
 class ImageView(wx.Panel):
@@ -292,12 +343,13 @@ class ImageView(wx.Panel):
         self.img_cp = None
         self.colours = colours
         self.selected_area = SelectedArea()
-        self.selection_rescale_lock = True
+        self.rescale_lock = True
         self.mouse_pos_lock = False
         self.mouse_pos = None
         self.window_dc = None
         self.Bind(wx.EVT_PAINT, self.__paint__)
         self.Bind(wx.EVT_LEFT_DOWN, self.__on_mouse_down__)
+        self.Bind(wx.EVT_LEFT_UP, self.__on_mouse_up__)
         self.Bind(wx.EVT_MOTION, self.__on_mousemove__)
         self.Bind(wx.EVT_SIZE, self.__on_resize__)
 
@@ -345,15 +397,21 @@ class ImageView(wx.Panel):
         skaluje zdjęcie, tak aby wypełniało
         jak największą jego powierzchnię.
         Dokonuje również zmiany rozmiaru obszaru
-        zaznaczonego na zdjęciu, jeżeli takowy istnieje.
+        zaznaczonego na zdjęciu, jeżeli takowy istnieje
+        oraz rozmiaru kopii zdjęcia jeżeli fragment
+        zdjęcia został skopiowany.
         """
         parent = self.GetParent()
         if parent.IsShownOnScreen():
             container_size = Point(self.GetSize())
             scaling = self.__scale_to_fit__(container_size, self.img.scale)
             self.img.update_scale(scaling.scale)
-            if self.selected_area.is_selected() and not self.selection_rescale_lock:
-                self.selected_area *= scaling.factor()
+            if not self.rescale_lock:
+                if self.selected_area.is_selected():
+                    self.selected_area *= scaling.factor()
+                if self.img_cp:
+                    new_scale = self.img_cp.scale * scaling.factor()
+                    self.img_cp.update_scale(new_scale)
 
     def __draw_image__(self, dc):
         self.__new_size__()
@@ -377,12 +435,15 @@ class ImageView(wx.Panel):
         width_height = width_height.round()
         dc.DrawRectangle(top_left.x, top_left.y, width_height.x, width_height.y)
 
+    def __calc_img_cp_pos__(self):
+        pos = (self.mouse_pos - self.img_cp.scale / 2).round()
+        return Point(pos.x, pos.y)
+
     def __draw_copy_prev__(self, dc):
         if self.img_cp:
-            bmp = wx.Bitmap(self.img_cp, dc)
-            pos_x = self.mouse_pos.x - round(self.img_cp.GetWidth() / 2)
-            pos_y = self.mouse_pos.y - round(self.img_cp.GetHeight() / 2)
-            dc.DrawBitmap(bmp, pos_x, pos_y)
+            bmp = self.img_cp.get_bitmap(dc)
+            pos = self.__calc_img_cp_pos__()
+            dc.DrawBitmap(bmp, pos.x, pos.y)
 
     def __paint__(self, _):
         dc = wx.GCDC(wx.PaintDC(self))
@@ -395,29 +456,54 @@ class ImageView(wx.Panel):
             self.window_dc = wx.WindowDC(self)
         return self.window_dc
 
-    def __on_mouse_down__(self, event):
-        pos = Point(event.GetLogicalPosition(self.__get_window_dc__()).Get())
-        self.selected_area = SelectedArea(pos - self.__get_top_left__())
+    def __scale_to_full_size__(self, coord):
+        """
+        Przeskaluj koordynaty z wielkości okna do
+        pełnej wielkości zdjęcia.
+        """
+        ratio = coord.x / coord.y
+        scale_factor_x = self.img.scale.x / self.img.GetWidth()
+        scale_x = coord.x / scale_factor_x
+        scale_y = scale_x / ratio
+        return Point(scale_x, scale_y)
+
+    def __on_mouse_down__(self, _):
+        if self.img_cp:
+            # Wklej zdjęcie.
+            img_cp_center = self.img_cp.scale / 2
+            converted = self.mouse_pos - self.__get_top_left__() - img_cp_center
+            converted = self.__scale_to_full_size__(converted).round()
+            self.img.paste(self.img_cp, converted.x, converted.y)
         self.img_cp = None
+        self.selected_area = SelectedArea(self.mouse_pos - self.__get_top_left__())
         self.Refresh()
+
+    def __on_mouse_up__(self, _):
+        if self.selected_area.is_selected():
+            factor = self.img.get_scale_factor()
+            full_select = self.selected_area / factor
+            self.img_cp = self.img.copy(full_select.to_wx_rect())
+            new_scale = self.img_cp.scale * factor
+            self.img_cp.update_scale(new_scale)
+            self.Refresh()
 
     def __on_mousemove__(self, event):
         if event.Leaving():
-            # Zatrzymaj aktualizowanie pozycji kursora.
+            # Zatrzymaj aktualizowanie pozycji kursora
+            # jeżeli nie jest on w środku okna.
             self.mouse_pos_lock = True
         elif event.Entering():
             self.mouse_pos_lock = False
         if not self.mouse_pos_lock:
             self.mouse_pos = Point(event.GetLogicalPosition(self.__get_window_dc__()).Get())
-        if event.Dragging():
-            self.selection_rescale_lock = True
-            self.selected_area.close(self.mouse_pos - self.__get_top_left__())
-            self.img_cp = self.img.get_scaled().GetSubImage(self.selected_area.to_wx_rect())
-        if self.selected_area.is_selected():
-            self.Refresh()
+            if event.Dragging():
+                self.rescale_lock = True
+                self.selected_area.close(self.mouse_pos - self.__get_top_left__())
+            if self.selected_area.is_selected():
+                self.Refresh()
 
     def __on_resize__(self, _):
-        self.selection_rescale_lock = False
+        self.rescale_lock = False
 
 
 class MainFrame(wx.Frame):
