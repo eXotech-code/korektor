@@ -202,7 +202,7 @@ class SelectedArea:
         Zwraca szerokość i wysokość prostokąta o formacie
         [lewy_górny_róg, prawy_dolny_róg].
         """
-        if not self.is_selected:
+        if not self.is_selected():
             raise ValueError("Not possible to get width and height of null selection.")
         return rect[1] - rect[0]
 
@@ -340,7 +340,7 @@ class Image(wx.Image):
     def paste(self, *args, **kwargs):
         """
         Przeciążenie metody wx.Image.Paste() usuwające
-        wartość self.bitmap_cache, aby możnabyło zobaczyć
+        wartość self.bitmap_cache, aby można było zobaczyć
         efekt wklejenia.
         """
         self.bitmap_cache = None
@@ -517,9 +517,9 @@ class ImageView(wx.Panel):
             self.img_cp = self.img.copy(full_select.to_wx_rect())
             if not self.img_cp:
                 self.selected_area = SelectedArea()
-                return
-            new_scale = self.img_cp.scale * factor
-            self.img_cp.update_scale(new_scale)
+            else:
+                new_scale = self.img_cp.scale * factor
+                self.img_cp.update_scale(new_scale)
             self.Refresh()
 
     def __on_mousemove__(self, event):
