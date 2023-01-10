@@ -584,28 +584,29 @@ class MainFrame(wx.Frame):
 
     def __on_save__(self, _):
         filename = FileDialog(self, "save").get_filename()
+        if filename is None:
+            return
         self.image_view.save_file(filename)
 
 
-class Korektor(wx.App):
+def korektor():
     """
-    Obiekt tej klasy uruchamia interfejs graficzny gdy powstaje.
+    Stworzenie instancji wx.App, wyświetlenie okna dialogowego
+    pozwalającego użytkownikowi na wybranie pliku do otwarcia
+    oraz stworzenie okna edycyjnego.
     """
-
-    NAME = "korektor"
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.SetAppName(self.NAME)
-        self.SetAppDisplayName(self.NAME)
-        filename = FileDialog(None, "open").get_filename()
-        if not filename:
-            self.Destroy()
-            return
-        mf = MainFrame(Colours(), filename)
-        self.SetTopWindow(mf)
-        self.MainLoop()
+    name = "korektor"
+    app = wx.App()
+    app.SetAppName(name)
+    app.SetAppDisplayName(name)
+    filename = FileDialog(None, "open").get_filename()
+    if not filename:
+        app.Destroy()
+        return
+    mf = MainFrame(Colours(), filename)
+    app.SetTopWindow(mf)
+    app.MainLoop()
 
 
 if __name__ == '__main__':
-    Korektor()
+    korektor()
