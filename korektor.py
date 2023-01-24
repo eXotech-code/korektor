@@ -362,6 +362,10 @@ class ImageView(wx.Panel):
     i wklejenia zaznaczonego fragmentu w wybrane miejsce.
     """
 
+    # Kody klawiszy.
+    CTRL = 308
+    S = 83
+
     def __init__(self, image, colours, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.img = Image(image)
@@ -372,11 +376,14 @@ class ImageView(wx.Panel):
         self.mouse_pos_lock = False
         self.mouse_pos = None
         self.window_dc = None
+        self.listening_for_s = False
         self.Bind(wx.EVT_PAINT, self.__paint__)
-        self.Bind(wx.EVT_LEFT_DOWN, self.__on_mouse_down__)
+        self.Bind(wx.EVT_LEFT_DOWN, self.__on_left_down__)
+        self.Bind(wx.EVT_RIGHT_DOWN, self.__on_right_down__)
         self.Bind(wx.EVT_LEFT_UP, self.__on_mouse_up__)
         self.Bind(wx.EVT_MOTION, self.__on_mousemove__)
         self.Bind(wx.EVT_SIZE, self.__on_resize__)
+        self.Bind(wx.EVT_KEY_DOWN, self.__on_key_down__)
 
     # Returns scaled values for width and height.
     def __scale_to_fit__(self, container_size, element_size):
@@ -499,7 +506,7 @@ class ImageView(wx.Panel):
         """
         self.img.SaveFile(filename)
 
-    def __on_mouse_down__(self, _):
+    def __on_left_down__(self, _):
         if self.img_cp:
             # Wklej zdjęcie.
             img_cp_center = self.img_cp.scale / 2
@@ -509,6 +516,15 @@ class ImageView(wx.Panel):
         self.img_cp = None
         self.selected_area = SelectedArea(self.mouse_pos - self.__get_top_left__())
         self.Refresh()
+
+    def __on_right_down__(self, _):
+        """
+        Anuluje selekcję.
+        """
+        if self.img_cp:
+            self.img_cp = None
+            self.selected_area = SelectedArea()
+            self.Refresh()
 
     def __on_mouse_up__(self, _):
         if self.selected_area.is_selected():
@@ -539,6 +555,22 @@ class ImageView(wx.Panel):
 
     def __on_resize__(self, _):
         self.rescale_lock = False
+
+    def __on_save__(self, _=None):
+        filename = FileDialog(self, "save").get_filename()
+        if filename is None:
+            return
+        self.save_file(filename)
+
+    def __on_key_down__(self, event):
+        """
+        Zapisuje plik po wciśnięciu CTRL+S.
+        """
+        code = event.GetKeyCode()
+        if code == self.CTRL:
+            self.listening_for_s = True
+        elif self.listening_for_s and code == self.S:
+            self.__on_save__()
 
 
 class MainFrame(wx.Frame):
@@ -574,19 +606,13 @@ class MainFrame(wx.Frame):
         # Dodawanie akcji do przycisków.
         self.Bind(wx.EVT_MENU, self.__on_exit__, ex)
         self.Bind(wx.EVT_MENU, self.__on_about__, about)
-        self.Bind(wx.EVT_MENU, self.__on_save__, save)
+        self.Bind(wx.EVT_MENU, self.image_view.__on_save__, save)
 
     def __on_exit__(self, _):
         self.Close(True)
 
     def __on_about__(self, _):
         wx.MessageBox("korektor\n Copyright (C) Jakub Piśkiewicz 2022", "About korektor")
-
-    def __on_save__(self, _):
-        filename = FileDialog(self, "save").get_filename()
-        if filename is None:
-            return
-        self.image_view.save_file(filename)
 
 
 def korektor():
